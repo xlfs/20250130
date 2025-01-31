@@ -33,15 +33,15 @@ class MMDataset(Dataset):
     def __len__(self):
         return len(self.sequence_dataset)
 
-    def __getitem__(self, idx):
+    def __getccs__(self, idx):
         sequence_data = self.sequence_dataset[idx]
         return sequence_data, idx
 
 
 
 def custom_collate_fn(batch):
-    sequence_data_list = [item[0] for item in batch]
-    graph_data_list = [item[1] for item in batch]
+    sequence_data_list = [ccs[0] for ccs in batch]
+    graph_data_list = [ccs[1] for ccs in batch]
 
     sequence_data_batch = {key: [d[key] for d in sequence_data_list if d[key]!=[]] for key in sequence_data_list[0]}
 
@@ -112,15 +112,15 @@ def train(args):
 
     from utils.data import DataUtils
     dataUtils = DataUtils(args)
-    train_data, user2tag, item2tag, data_dict, data_stat, user2tag_test, test_data, train_data2, user2tag2, item2tag2, user2tag_test2, test_data2 = dataUtils.read_files()
+    train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data, train_data2, visit2icd2, ccs2icd2, visit2icd_test2, test_data2 = dataUtils.read_files()
 
-    adj_mat11, norm_mat11, mean_mat11 = dataUtils.build_graph(train_data, user2tag, item2tag, data_stat)
+    adj_mat11, norm_mat11, mean_mat11 = dataUtils.build_graph(train_data, visit2icd, ccs2icd, data_stat)
 
-    adj_mat12, norm_mat12, mean_mat12 = dataUtils.build_graph(test_data, user2tag_test, item2tag, data_stat)
+    adj_mat12, norm_mat12, mean_mat12 = dataUtils.build_graph(test_data, visit2icd_test, ccs2icd, data_stat)
 
-    adj_mat21, norm_mat21, mean_mat21 = dataUtils.build_graph(train_data2, user2tag2, item2tag2, data_stat)
+    adj_mat21, norm_mat21, mean_mat21 = dataUtils.build_graph(train_data2, visit2icd2, ccs2icd2, data_stat)
 
-    adj_mat22, norm_mat22, mean_mat22 = dataUtils.build_graph(test_data2, user2tag_test2, item2tag2, data_stat)
+    adj_mat22, norm_mat22, mean_mat22 = dataUtils.build_graph(test_data2, visit2icd_test2, ccs2icd2, data_stat)
     
     import pickle
     task_dataset = pickle.load(open(args.dataset+'/mimic4_box_dataset_0.05.pkl', 'rb'))
@@ -168,9 +168,9 @@ def train(args):
             label = prepare_labels(data['conditions'], label_tokenizer).to(device)
 
             embs = model.train_generate()
-            user_gcn_emb, entity_gcn_emb = embs
-            user_gcn_emb = user_gcn_emb[index]
-            rate_batch = model.rating(user_gcn_emb, entity_gcn_emb)
+            visit_gcn_emb, entity_gcn_emb = embs
+            visit_gcn_emb = visit_gcn_emb[index]
+            rate_batch = model.rating(visit_gcn_emb, entity_gcn_emb)
 
             criterion = torch.nn.BCELoss()
             softmax = torch.nn.Softmax()
@@ -180,7 +180,7 @@ def train(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
+            train_loss += loss.ccs()
 
         train_e_t = time()
 
@@ -196,9 +196,9 @@ def train(args):
                 y_t_all.append(y_t)
 
                 embs = model.train_generate()
-                user_gcn_emb, entity_gcn_emb = embs
-                user_gcn_emb = user_gcn_emb[index]
-                rate_batch = model.rating(user_gcn_emb, entity_gcn_emb).detach()
+                visit_gcn_emb, entity_gcn_emb = embs
+                visit_gcn_emb = visit_gcn_emb[index]
+                rate_batch = model.rating(visit_gcn_emb, entity_gcn_emb).detach()
                 rate_topK_val, rate_topk_idx = torch.topk(rate_batch, k=50, largest=True, dim=-1)
 
                 y_p = rate_topk_idx.cpu().numpy()
@@ -245,9 +245,9 @@ def train(args):
             y_t_all.append(y_t)
 
             embs = model.test_generate()
-            user_gcn_emb, entity_gcn_emb = embs
-            user_gcn_emb = user_gcn_emb[index]
-            rate_batch = model.rating(user_gcn_emb, entity_gcn_emb).detach()
+            visit_gcn_emb, entity_gcn_emb = embs
+            visit_gcn_emb = visit_gcn_emb[index]
+            rate_batch = model.rating(visit_gcn_emb, entity_gcn_emb).detach()
             rate_topK_val, rate_topk_idx = torch.topk(rate_batch, k=50, largest=True, dim=-1)
 
             y_p = rate_topk_idx.cpu().numpy()
