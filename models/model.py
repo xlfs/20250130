@@ -4,10 +4,10 @@ import torch.nn.functional as F
 from torch_scatter import scatter_sum, scatter_mean, scatter_min,scatter_max
 from torch_scatter.composite import scatter_softmax
 
-class CenterIntersection(nn.Module):
+class Attention(nn.Module):
 
     def __init__(self, dim):
-        super(CenterIntersection, self).__init__()
+        super(Attention, self).__init__()
         self.dim = dim
         self.layer1 = nn.Linear(self.dim, self.dim)
         self.layer2 = nn.Linear(self.dim, self.dim)
@@ -18,45 +18,33 @@ class CenterIntersection(nn.Module):
         layer1_act = F.relu(self.layer1(embeddings))
         layer2_act = self.layer2(layer1_act)
         attention = scatter_softmax(src=layer2_act, index=idx, dim=0)
-        user_embedding = scatter_sum(attention * embeddings, index=idx, dim=0, dim_size=dim_size)
-        return user_embedding
-
-class BoxOffsetIntersection(nn.Module):
-    def __init__(self, dim):
-        super(BoxOffsetIntersection, self).__init__()
-
-    def forward(self, embeddings, idx, dim_size, union=False ):
-        if  union:
-            offset = scatter_max(src=embeddings, index=idx, dim=0, dim_size=dim_size)[0]
-        else:
-            offset = scatter_min(src=embeddings, index=idx, dim=0, dim_size=dim_size)[0]
-        return offset 
+        visit_embedding = scatter_sum(attention * embeddings, index=idx, dim=0, dim_size=dim_size)
+        return visit_embedding
 
 
 class GraphConv(nn.Module):
-    def __init__(self, emb_size, n_hops, n_users, n_items, n_tags, device, node_dropout_rate=0.5, mess_dropout_rate=0.1):
+    def __init__(self, emb_size, n_hops, n_visits, n_ccss, n_icds, device, node_dropout_rate=0.5, mess_dropout_rate=0.1):
         super(GraphConv, self).__init__()
 
         self.n_layers = n_hops
         self.emb_size = emb_size
-        self.n_users = n_users
-        self.n_tags = n_tags
-        self.n_items = n_items
-        self.n_nodes = self.n_users + self.n_items + self.n_tags
+        self.n_visits = n_visits
+        self.n_icds = n_icds
+        self.n_ccss = n_ccss
+        self.n_nodes = self.n_visits + self.n_ccss + self.n_icds
         self.node_dropout_rate = node_dropout_rate
         self.mess_dropout_rate = mess_dropout_rate
         self.device = device
 
-        idx = torch.arange(self.n_users).to(self.device)
-        #self.user_union_idx = torch.cat([idx, idx], dim=0)
-        self.user_union_idx = torch.cat([idx, idx, idx, idx, idx], dim=0)
+        idx = torch.arange(self.n_visits).to(self.device)
+        #self.visit_union_idx = torch.cat([idx, idx], dim=0)
+        self.visit_union_idx = torch.cat([idx, idx, idx, idx, idx], dim=0)
 
-        idx = torch.arange(self.n_items + self.n_tags + self.n_users).to(self.device)
+        idx = torch.arange(self.n_ccss + self.n_icds + self.n_visits).to(self.device)
         self.all_union_idx = torch.cat([idx, idx], dim=0)
 
 
-        self.center_net = CenterIntersection(self.emb_size)
-        self.offset_net = BoxOffsetIntersection(self.emb_size)
+        self.center_net = Attention(self.emb_size)
         self.dropout = nn.Dropout(p=mess_dropout_rate)  # mess dropout
 
         self.visit_time = torch.load('mimic3_0.05/visit_time.pt')
@@ -66,12 +54,14 @@ class GraphConv(nn.Module):
         nn.init.xavier_uniform_(self.layer1.weight)
         nn.init.xavier_uniform_(self.layer2.weight)
 
+    def offset_net(self, embeddings, idx, dim_size):
+        return scatter_max(src=embeddings, index=idx, dim=0, dim_size=dim_size)[0]
 
 
-    def forward(self, user_center, user_offset, item_center, item_offset, tag_center, tag_offset, graph1, graph2):
+    def forward(self, visit_center, visit_offset, ccs_center, ccs_offset, icd_center, icd_offset, graph1, graph2):
 
-        all_center = torch.cat([user_center, item_center, tag_center], dim=0)
-        all_offset = F.relu(torch.cat([user_offset, item_offset, tag_offset], dim=0))
+        all_center = torch.cat([visit_center, ccs_center, icd_center], dim=0)
+        all_offset = F.relu(torch.cat([visit_offset, ccs_offset, icd_offset], dim=0))
 
 
         # all history icd ccs
@@ -80,22 +70,22 @@ class GraphConv(nn.Module):
 
         #center
         history_embs = all_center[tail]
-        user_center_agg1 = self.center_net(history_embs, head, self.n_nodes)
-        user_center_agg1 = user_center_agg1[:self.n_users]
-        user_center_agg1 = F.normalize(user_center_agg1)
+        visit_center_agg1 = self.center_net(history_embs, head, self.n_nodes)
+        visit_center_agg1 = visit_center_agg1[:self.n_visits]
+        visit_center_agg1 = F.normalize(visit_center_agg1)
 
-        ## user offset
-        ### user-item, intersect
-        inter_user_ordinal = (head < self.n_users) & (tail >= self.n_users) & (tail < self.n_users + self.n_items)
-        inter_user_history_offset = F.relu(all_offset[tail[inter_user_ordinal]])
-        inter_user_offset_emb1 = self.offset_net(inter_user_history_offset, head[inter_user_ordinal], self.n_nodes, union=True)
-        inter_user_offset_emb1 = inter_user_offset_emb1[:self.n_users]
+        ## visit offset
+        ### visit-ccs, intersect
+        inter_visit_ordinal = (head < self.n_visits) & (tail >= self.n_visits) & (tail < self.n_visits + self.n_ccss)
+        inter_visit_history_offset = F.relu(all_offset[tail[inter_visit_ordinal]])
+        inter_visit_offset_emb1 = self.offset_net(inter_visit_history_offset, head[inter_visit_ordinal], self.n_nodes)
+        inter_visit_offset_emb1 = inter_visit_offset_emb1[:self.n_visits]
 
-        ### user-tag, union
-        user_tag_ordinal = (head < self.n_users) & (tail >= self.n_users + self.n_items)
-        user_tag_history_offset = F.relu(all_offset[tail[user_tag_ordinal]])
-        ut_user_offset_emb1 = self.offset_net(user_tag_history_offset, head[user_tag_ordinal], self.n_nodes, union=True)
-        ut_user_offset_emb1 = ut_user_offset_emb1[:self.n_users]
+        ### visit-icd, union
+        visit_icd_ordinal = (head < self.n_visits) & (tail >= self.n_visits + self.n_ccss)
+        visit_icd_history_offset = F.relu(all_offset[tail[visit_icd_ordinal]])
+        ut_visit_offset_emb1 = self.offset_net(visit_icd_history_offset, head[visit_icd_ordinal], self.n_nodes)
+        ut_visit_offset_emb1 = ut_visit_offset_emb1[:self.n_visits]
 
 
 
@@ -106,10 +96,10 @@ class GraphConv(nn.Module):
         head, tail = _indices[0, :], _indices[1, :]
 
 
-        entity_user_ordinal = (head < self.n_users) & (tail >= self.n_users)
-        history_embs = all_center[tail[entity_user_ordinal]]
+        entity_visit_ordinal = (head < self.n_visits) & (tail >= self.n_visits)
+        history_embs = all_center[tail[entity_visit_ordinal]]
         # icd ccs
-        agg_emb1 = self.center_net(history_embs, head[entity_user_ordinal], self.n_users)
+        agg_emb1 = self.center_net(history_embs, head[entity_visit_ordinal], self.n_visits)
 
         time_embedding = torch.tensor(self.visit_time, dtype = torch.float32, device=self.device).view(-1,1)
         time_embedding = 1.0/time_embedding
@@ -119,42 +109,42 @@ class GraphConv(nn.Module):
         agg_emb2 = agg_emb1 * time_embedding
 
         # visit
-        user_user_ordinal =  (head < self.n_users) & (tail < self.n_users)
-        history_embs = agg_emb2[tail[user_user_ordinal]]
-        user_center_agg2 = self.center_net(history_embs, head[user_user_ordinal], self.n_users)
-        user_center_agg2 = F.normalize(user_center_agg2)
+        visit_visit_ordinal =  (head < self.n_visits) & (tail < self.n_visits)
+        history_embs = agg_emb2[tail[visit_visit_ordinal]]
+        visit_center_agg2 = self.center_net(history_embs, head[visit_visit_ordinal], self.n_visits)
+        visit_center_agg2 = F.normalize(visit_center_agg2)
 
         lambda1 = 1.0
-        user_final_emb = lambda1*user_center_agg1 + (1.0-lambda1)*user_center_agg2
+        visit_final_emb = lambda1*visit_center_agg1 + (1.0-lambda1)*visit_center_agg2
 
 
-        ## user offset
-        ### user-item, intersect
-        inter_user_ordinal = (head < self.n_users) & (tail >= self.n_users) & (tail < self.n_users + self.n_items)
-        inter_user_history_offset = F.relu(all_offset[tail[inter_user_ordinal]])
-        inter_user_offset_emb2 = self.offset_net(inter_user_history_offset, head[inter_user_ordinal], self.n_nodes, union=True)
-        inter_user_offset_emb2 = inter_user_offset_emb2[:self.n_users]
+        ## visit offset
+        ### visit-ccs, intersect
+        inter_visit_ordinal = (head < self.n_visits) & (tail >= self.n_visits) & (tail < self.n_visits + self.n_ccss)
+        inter_visit_history_offset = F.relu(all_offset[tail[inter_visit_ordinal]])
+        inter_visit_offset_emb2 = self.offset_net(inter_visit_history_offset, head[inter_visit_ordinal], self.n_nodes)
+        inter_visit_offset_emb2 = inter_visit_offset_emb2[:self.n_visits]
 
-        ### user-tag, union
-        user_tag_ordinal = (head < self.n_users) & (tail >= self.n_users + self.n_items)
-        user_tag_history_offset = F.relu(all_offset[tail[user_tag_ordinal]])
-        ut_user_offset_emb2 = self.offset_net(user_tag_history_offset, head[user_tag_ordinal], self.n_nodes, union=True)
-        ut_user_offset_emb2 = ut_user_offset_emb2[:self.n_users]
+        ### visit-icd, union
+        visit_icd_ordinal = (head < self.n_visits) & (tail >= self.n_visits + self.n_ccss)
+        visit_icd_history_offset = F.relu(all_offset[tail[visit_icd_ordinal]])
+        ut_visit_offset_emb2 = self.offset_net(visit_icd_history_offset, head[visit_icd_ordinal], self.n_nodes)
+        ut_visit_offset_emb2 = ut_visit_offset_emb2[:self.n_visits]
 
-        ### user-user, union
-        user_user_ordinal =  (head < self.n_users) & (tail < self.n_users)
-        user_user_history_offset = F.relu(all_offset[tail[user_user_ordinal]])
-        user_user_offset_emb = self.offset_net(user_user_history_offset, head[user_user_ordinal], self.n_users, union=True)
+        ### visit-visit, union
+        visit_visit_ordinal =  (head < self.n_visits) & (tail < self.n_visits)
+        visit_visit_history_offset = F.relu(all_offset[tail[visit_visit_ordinal]])
+        visit_visit_offset_emb = self.offset_net(visit_visit_history_offset, head[visit_visit_ordinal], self.n_visits)
 
 
         ### union two part
-        user_offset = torch.cat([inter_user_offset_emb1, ut_user_offset_emb1], dim=0)
-        user_offset = torch.cat([inter_user_offset_emb1, ut_user_offset_emb1, inter_user_offset_emb2, ut_user_offset_emb2, user_user_offset_emb], dim=0)
-        user_final_offset = F.relu(self.offset_net(user_offset, self.user_union_idx, inter_user_offset_emb1.shape[0], union=True))
+        visit_offset = torch.cat([inter_visit_offset_emb1, ut_visit_offset_emb1], dim=0)
+        visit_offset = torch.cat([inter_visit_offset_emb1, ut_visit_offset_emb1, inter_visit_offset_emb2, ut_visit_offset_emb2, visit_visit_offset_emb], dim=0)
+        visit_final_offset = F.relu(self.offset_net(visit_offset, self.visit_union_idx, inter_visit_offset_emb1.shape[0]))
 
 
 
-        return user_final_emb, user_final_offset
+        return visit_final_emb, visit_final_offset
 
 
 
@@ -177,11 +167,11 @@ class BoxLM(nn.Module):
         super(BoxLM, self).__init__()
 
         self.beta = args.beta
-        self.n_users = data_stat['n_users']
-        self.n_items = data_stat['n_items']
-        self.n_tags = data_stat["n_tags"]
-        self.n_nodes = data_stat['n_nodes']  # n_users + n_items + n_tags
-        self.n_entities = data_stat['n_items'] + data_stat['n_tags']
+        self.n_visits = data_stat['n_visits']
+        self.n_ccss = data_stat['n_ccss']
+        self.n_icds = data_stat["n_icds"]
+        self.n_nodes = data_stat['n_nodes']  # n_visits + n_ccss + n_icds
+        self.n_entities = data_stat['n_ccss'] + data_stat['n_icds']
         self.decay = args.l2
         self.emb_size = args.dim
         self.n_layers = args.context_hops
@@ -225,10 +215,10 @@ class BoxLM(nn.Module):
         self.graph22 = self.add_residual(self.graph22)
 
 
-        item_embedding = torch.load('mimic3_0.05/item_embeddings.pt')
-        self.item_embedding = torch.from_numpy(item_embedding).to(self.device)
-        tag_embedding = torch.load('mimic3_0.05/tag_embeddings.pt')
-        self.tag_embedding = torch.from_numpy(tag_embedding).to(self.device)
+        ccs_embedding = torch.load('mimic3_0.05/ccs_embeddings.pt')
+        self.ccs_embedding = torch.from_numpy(ccs_embedding).to(self.device)
+        icd_embedding = torch.load('mimic3_0.05/icd_embeddings.pt')
+        self.icd_embedding = torch.from_numpy(icd_embedding).to(self.device)
 
         self.adj1 = torch.load('mimic3_0.05/adj-1.pt').to(self.device)
         self.adj2 = torch.load('mimic3_0.05/adj-2.pt').to(self.device)
@@ -244,17 +234,17 @@ class BoxLM(nn.Module):
     def _init_model(self):
         return GraphConv(emb_size=self.emb_size,
                          n_hops=self.n_layers,
-                         n_users=self.n_users,
-                         n_items=self.n_items,
-                         n_tags=self.n_tags,
+                         n_visits=self.n_visits,
+                         n_ccss=self.n_ccss,
+                         n_icds=self.n_icds,
                          device=self.device,
                          node_dropout_rate=self.node_dropout_rate,
                          mess_dropout_rate=self.mess_dropout_rate)
     def _init_weight(self):
         initializer = nn.init.xavier_uniform_
-        self.all_embed = initializer(torch.empty(self.n_users + self.n_entities, self.emb_size))
+        self.all_embed = initializer(torch.empty(self.n_visits + self.n_entities, self.emb_size))
         self.all_embed = nn.Parameter(self.all_embed)
-        self.all_offset = initializer(torch.empty([self.n_users + self.n_entities, self.emb_size])) 
+        self.all_offset = initializer(torch.empty([self.n_visits + self.n_entities, self.emb_size])) 
         self.all_offset = nn.Parameter(self.all_offset)
 
 
@@ -274,11 +264,11 @@ class BoxLM(nn.Module):
         return torch.sparse.FloatTensor(i, v, coo.shape)
 
     
-    def cal_logit_box(self, user_center_embedding, user_offset_embedding, item_center_embedding, item_offset_embedding, training=True):
+    def cal_logit_box(self, visit_center_embedding, visit_offset_embedding, ccs_center_embedding, ccs_offset_embedding, training=True):
         if self.logit_cal == "box":
             gumbel_beta = self.beta
-            t1z, t1Z = user_center_embedding - user_offset_embedding, user_center_embedding + user_offset_embedding
-            t2z, t2Z = item_center_embedding - item_offset_embedding, item_center_embedding + item_offset_embedding
+            t1z, t1Z = visit_center_embedding - visit_offset_embedding, visit_center_embedding + visit_offset_embedding
+            t2z, t2Z = ccs_center_embedding - ccs_offset_embedding, ccs_center_embedding + ccs_offset_embedding
             z = gumbel_beta * torch.logaddexp(
                     t1z / gumbel_beta, t2z / gumbel_beta
                 )
@@ -299,8 +289,8 @@ class BoxLM(nn.Module):
             )
 
 
-    def lightgcn(self, item_center, tag_center):
-        embedding = torch.cat((item_center, tag_center), dim=0)
+    def lightgcn(self, ccs_center, icd_center):
+        embedding = torch.cat((ccs_center, icd_center), dim=0)
 
 
         emb1 = torch.spmm(self.adj1, embedding)
@@ -312,65 +302,65 @@ class BoxLM(nn.Module):
 
         embs = emb1 * (1/3) + emb2 * (1/3) + emb3 * (1/3)
 
-        return embs[:item_center.shape[0]], embs[item_center.shape[0]:]
+        return embs[:ccs_center.shape[0]], embs[ccs_center.shape[0]:]
 
 
     def train_generate(self):
-        user_emb, item_emb, tag_emb = torch.split(self.all_embed, [self.n_users, self.n_items, self.n_tags])
-        user_offset, item_offset, tag_offset = torch.split(self.all_offset, [self.n_users, self.n_items, self.n_tags])
+        visit_emb, ccs_emb, icd_emb = torch.split(self.all_embed, [self.n_visits, self.n_ccss, self.n_icds])
+        visit_offset, ccs_offset, icd_offset = torch.split(self.all_offset, [self.n_visits, self.n_ccss, self.n_icds])
         
-        item_emb = self.center_mlp(self.item_embedding)
-        tag_emb = self.center_mlp(self.tag_embedding)
-        item_offset, tag_offset = self.lightgcn(item_emb, tag_emb)
+        ccs_emb = self.center_mlp(self.ccs_embedding)
+        icd_emb = self.center_mlp(self.icd_embedding)
+        ccs_offset, icd_offset = self.lightgcn(ccs_emb, icd_emb)
 
 
-        user_agg_embs, user_agg_offset = self.gcn(user_emb, user_offset, item_emb, item_offset, tag_emb, tag_offset, self.graph11, self.graph21)
+        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset, self.graph11, self.graph21)
 
-        item_agg_embs = item_emb
-        tag_agg_emb = tag_emb
-        item_agg_offset = item_offset
-        tag_agg_offset = tag_offset
+        ccs_agg_embs = ccs_emb
+        icd_agg_emb = icd_emb
+        ccs_agg_offset = ccs_offset
+        icd_agg_offset = icd_offset
 
         
-        user_embs = torch.cat([user_agg_embs, user_agg_offset], axis=-1)
-        item_embs = torch.cat([item_agg_embs, item_agg_offset], axis=-1)
+        visit_embs = torch.cat([visit_agg_embs, visit_agg_offset], axis=-1)
+        ccs_embs = torch.cat([ccs_agg_embs, ccs_agg_offset], axis=-1)
 
-        return user_embs, item_embs
+        return visit_embs, ccs_embs
 
     def test_generate(self):
-        user_emb, item_emb, tag_emb = torch.split(self.all_embed, [self.n_users, self.n_items, self.n_tags])
-        user_offset, item_offset, tag_offset = torch.split(self.all_offset, [self.n_users, self.n_items, self.n_tags])
+        visit_emb, ccs_emb, icd_emb = torch.split(self.all_embed, [self.n_visits, self.n_ccss, self.n_icds])
+        visit_offset, ccs_offset, icd_offset = torch.split(self.all_offset, [self.n_visits, self.n_ccss, self.n_icds])
 
-        item_emb = self.center_mlp(self.item_embedding)
-        tag_emb = self.center_mlp(self.tag_embedding)
-        item_offset, tag_offset = self.lightgcn(item_emb, tag_emb)
+        ccs_emb = self.center_mlp(self.ccs_embedding)
+        icd_emb = self.center_mlp(self.icd_embedding)
+        ccs_offset, icd_offset = self.lightgcn(ccs_emb, icd_emb)
 
-        user_agg_embs, user_agg_offset = self.gcn(user_emb, user_offset, item_emb, item_offset, tag_emb, tag_offset,
+        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset,
                                                   self.graph12, self.graph22)
 
-        item_agg_embs = item_emb
-        tag_agg_emb = tag_emb
-        item_agg_offset = item_offset
-        tag_agg_offset = tag_offset
+        ccs_agg_embs = ccs_emb
+        icd_agg_emb = icd_emb
+        ccs_agg_offset = ccs_offset
+        icd_agg_offset = icd_offset
 
-        user_embs = torch.cat([user_agg_embs, user_agg_offset], axis=-1)
-        item_embs = torch.cat([item_agg_embs, item_agg_offset], axis=-1)
+        visit_embs = torch.cat([visit_agg_embs, visit_agg_offset], axis=-1)
+        ccs_embs = torch.cat([ccs_agg_embs, ccs_agg_offset], axis=-1)
 
-        return user_embs, item_embs
+        return visit_embs, ccs_embs
 
 
-    def rating(self, user_embs, entity_embs, same_dim=False):
+    def rating(self, visit_embs, entity_embs, same_dim=False):
         if same_dim:
-            user_agg_embs, user_agg_offset = torch.split(user_embs, [self.emb_size, self.emb_size], dim=-1)
+            visit_agg_embs, visit_agg_offset = torch.split(visit_embs, [self.emb_size, self.emb_size], dim=-1)
             entity_agg_embs, entity_agg_offset = torch.split(entity_embs, [self.emb_size, self.emb_size], dim=-1)
-            return self.cal_logit_box(user_agg_embs, user_agg_offset, entity_agg_embs, entity_agg_offset)
+            return self.cal_logit_box(visit_agg_embs, visit_agg_offset, entity_agg_embs, entity_agg_offset)
         else:
-            n_users = user_embs.shape[0]
+            n_visits = visit_embs.shape[0]
             n_entities = entity_embs.shape[0]
-            user_embs = user_embs.unsqueeze(1).expand(n_users, n_entities,  self.emb_size * 2)
-            user_agg_embs, user_agg_offset = torch.split(user_embs, [self.emb_size, self.emb_size], dim=-1)
+            visit_embs = visit_embs.unsqueeze(1).expand(n_visits, n_entities,  self.emb_size * 2)
+            visit_agg_embs, visit_agg_offset = torch.split(visit_embs, [self.emb_size, self.emb_size], dim=-1)
 
-            entity_embs = entity_embs.unsqueeze(0).expand(n_users, n_entities,  self.emb_size * 2)
+            entity_embs = entity_embs.unsqueeze(0).expand(n_visits, n_entities,  self.emb_size * 2)
             entity_agg_embs, entity_agg_offset = torch.split(entity_embs, [self.emb_size, self.emb_size], dim=-1)
 
-            return self.cal_logit_box(user_agg_embs, user_agg_offset, entity_agg_embs, entity_agg_offset)
+            return self.cal_logit_box(visit_agg_embs, visit_agg_offset, entity_agg_embs, entity_agg_offset)
