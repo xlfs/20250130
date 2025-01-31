@@ -38,6 +38,5 @@ def parse_args():
     # ===== relation context ===== #
     parser.add_argument('--context_hops', type=int, default=1, help='number of context hops')
     # ===== save model ===== #
-    parser.add_argument("--out_dir", type=str, default="./weights/", help="output directory for model")
     parser.add_argument("--logit_cal", type=str, default="box")
     return parser.parse_args()

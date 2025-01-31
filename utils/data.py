@@ -33,16 +33,16 @@ class DataUtils():
         self.args = args
         self.device = torch.device(f"cuda:{self.args.gpu_id}")
 
-    def build_graph(self, train_data, user2tag, item2tag, data_stat):
+    def build_graph(self, train_data, visit2icd, ccs2icd, data_stat):
         print("building graph")
-        n_users = data_stat["n_users"]
-        n_items = data_stat["n_items"]
-        n_tags = data_stat["n_tags"]
+        n_visits = data_stat["n_visits"]
+        n_ccss = data_stat["n_ccss"]
+        n_icds = data_stat["n_icds"]
         n_nodes = data_stat["n_nodes"]
 
 
         train_data = train_data.copy()
-        train_data[:,1] = train_data[:,1] + n_users
+        train_data[:,1] = train_data[:,1] + n_visits
         
         
         row = train_data[:,0]
@@ -50,22 +50,22 @@ class DataUtils():
         graph_dict = {
             "none" : (row, col)
         }
-        if user2tag is not None:
-            user2tag = user2tag.copy()
-            item2tag = item2tag.copy()
+        if visit2icd is not None:
+            visit2icd = visit2icd.copy()
+            ccs2icd = ccs2icd.copy()
             
-            user2tag[:,1] = user2tag[:,1] + n_users + n_items
-            item2tag[:,1] = item2tag[:,1] + n_users + n_items
+            visit2icd[:,1] = visit2icd[:,1] + n_visits + n_ccss
+            ccs2icd[:,1] = ccs2icd[:,1] + n_visits + n_ccss
             
-            item2tag[:,0] = item2tag[:,0] + n_users
+            ccs2icd[:,0] = ccs2icd[:,0] + n_visits
             
-            graph_dict["user"] = (np.concatenate([row, user2tag[:,0]]), np.concatenate([col, user2tag[:,1]]))
-            graph_dict["item"] = (np.concatenate([row, item2tag[:,0]]), np.concatenate([col, item2tag[:,1]]))
-            graph_dict["all"] = (np.concatenate([row, user2tag[:,0], item2tag[:,0]]), np.concatenate([col, user2tag[:,1], item2tag[:,1]]))
+            graph_dict["visit"] = (np.concatenate([row, visit2icd[:,0]]), np.concatenate([col, visit2icd[:,1]]))
+            graph_dict["ccs"] = (np.concatenate([row, ccs2icd[:,0]]), np.concatenate([col, ccs2icd[:,1]]))
+            graph_dict["all"] = (np.concatenate([row, visit2icd[:,0], ccs2icd[:,0]]), np.concatenate([col, visit2icd[:,1], ccs2icd[:,1]]))
         cf_adjs = {}
         norm_mats = {}
         mean_mats = {}
-        for k, g in graph_dict.items():
+        for k, g in graph_dict.ccss():
             row, col = g
             if self.args.inverse_r:
                 row_t = np.concatenate([row, col])
@@ -90,89 +90,89 @@ class DataUtils():
         data_path = os.path.join(self.args.data_path, self.args.dataset)
         data_path1 = data_path + '/1'
         train_file = os.path.join(data_path1, "train.txt")
-        user2tag_file = os.path.join(data_path1, "user2tag.txt")
-        item2tag_file = os.path.join(data_path1, "item2tag.txt")
+        visit2icd_file = os.path.join(data_path1, "visit2icd.txt")
+        ccs2icd_file = os.path.join(data_path1, "ccs2icd.txt")
 
-        train_data = pd.read_csv(train_file, sep="\t")[["userID", "itemID"]]
+        train_data = pd.read_csv(train_file, sep="\t")[["visitID", "ccsID"]]
 
-        user2tag, item2tag = None, None
-        has_tag = os.path.exists(user2tag_file)
-        if has_tag:
-            user2tag = pd.read_csv(user2tag_file, sep="\t")
-            item2tag = pd.read_csv(item2tag_file, sep="\t")
-            user2tag, item2tag = user2tag.to_numpy(), item2tag.to_numpy()
+        visit2icd, ccs2icd = None, None
+        has_icd = os.path.exists(visit2icd_file)
+        if has_icd:
+            visit2icd = pd.read_csv(visit2icd_file, sep="\t")
+            ccs2icd = pd.read_csv(ccs2icd_file, sep="\t")
+            visit2icd, ccs2icd = visit2icd.to_numpy(), ccs2icd.to_numpy()
 
         train_data = train_data.to_numpy()
 
         test_file = os.path.join(data_path1, "test.txt")
-        user2tag_file2 = os.path.join(data_path1, "user2tag_test.txt")
-        user2tag_test = pd.read_csv(user2tag_file2, sep="\t")
-        user2tag_test = user2tag_test.to_numpy()
+        visit2icd_file2 = os.path.join(data_path1, "visit2icd_test.txt")
+        visit2icd_test = pd.read_csv(visit2icd_file2, sep="\t")
+        visit2icd_test = visit2icd_test.to_numpy()
         test_data = pd.read_csv(test_file, sep="\t")
         test_data = test_data.to_numpy()
         
-        data_stat = self.__stat(train_data, user2tag, item2tag, user2tag_test,test_data)
+        data_stat = self.__stat(train_data, visit2icd, ccs2icd, visit2icd_test,test_data)
 
 
-        user2item_dict = defaultdict(list)
-        user2tag_dict = defaultdict(list)
+        visit2ccs_dict = defaultdict(list)
+        visit2icd_dict = defaultdict(list)
         for idx in range(train_data.shape[0]):
-            user2item_dict[train_data[idx, 0]].append(train_data[idx, 1])
+            visit2ccs_dict[train_data[idx, 0]].append(train_data[idx, 1])
 
-        if has_tag:
-            for idx in range(user2tag.shape[0]):
-                user2tag_dict[user2tag[idx, 0]].append(user2tag[idx, 1])
+        if has_icd:
+            for idx in range(visit2icd.shape[0]):
+                visit2icd_dict[visit2icd[idx, 0]].append(visit2icd[idx, 1])
         data_dict = {
-            "user2item": user2item_dict,
-            "user2tag": user2tag_dict,
+            "visit2ccs": visit2ccs_dict,
+            "visit2icd": visit2icd_dict,
         }
 
         data_path2 = data_path + '/2'
         train_file = os.path.join(data_path2, "train.txt")
-        user2tag_file = os.path.join(data_path2, "user2tag.txt")
-        item2tag_file = os.path.join(data_path2, "item2tag.txt")
+        visit2icd_file = os.path.join(data_path2, "visit2icd.txt")
+        ccs2icd_file = os.path.join(data_path2, "ccs2icd.txt")
 
-        train_data2 = pd.read_csv(train_file, sep="\t")[["userID", "itemID"]]
+        train_data2 = pd.read_csv(train_file, sep="\t")[["visitID", "ccsID"]]
 
-        user2tag2, item2tag2 = None, None
-        has_tag = os.path.exists(user2tag_file)
-        if has_tag:
-            user2tag2 = pd.read_csv(user2tag_file, sep="\t")
-            item2tag2 = pd.read_csv(item2tag_file, sep="\t")
-            user2tag2, item2tag2 = user2tag2.to_numpy(), item2tag2.to_numpy()
+        visit2icd2, ccs2icd2 = None, None
+        has_icd = os.path.exists(visit2icd_file)
+        if has_icd:
+            visit2icd2 = pd.read_csv(visit2icd_file, sep="\t")
+            ccs2icd2 = pd.read_csv(ccs2icd_file, sep="\t")
+            visit2icd2, ccs2icd2 = visit2icd2.to_numpy(), ccs2icd2.to_numpy()
 
         train_data2 = train_data2.to_numpy()
 
         test_file = os.path.join(data_path2, "test.txt")
-        user2tag_file2 = os.path.join(data_path2, "user2tag_test.txt")
-        user2tag_test2 = pd.read_csv(user2tag_file2, sep="\t")
-        user2tag_test2 = user2tag_test2.to_numpy()
+        visit2icd_file2 = os.path.join(data_path2, "visit2icd_test.txt")
+        visit2icd_test2 = pd.read_csv(visit2icd_file2, sep="\t")
+        visit2icd_test2 = visit2icd_test2.to_numpy()
         test_data2 = pd.read_csv(test_file, sep="\t")
         test_data2 = test_data2.to_numpy()
 
-        return train_data, user2tag, item2tag, data_dict, data_stat, user2tag_test, test_data, train_data2, user2tag2, item2tag2, user2tag_test2, test_data2
+        return train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data, train_data2, visit2icd2, ccs2icd2, visit2icd_test2, test_data2
 
 
-    def __stat(self, train_data, user2tag, item2tag, user2tag2,test_data):
+    def __stat(self, train_data, visit2icd, ccs2icd, visit2icd2,test_data):
 
-        n_users = max(max(train_data[:, 0]),max(test_data[:, 0])) + 1
-        n_items = max(train_data[:, 1]) + 1
-        n_tags = max(max(user2tag[:, 1]),max(user2tag2[:, 1])) + 1
+        n_visits = max(max(train_data[:, 0]),max(test_data[:, 0])) + 1
+        n_ccss = max(train_data[:, 1]) + 1
+        n_icds = max(max(visit2icd[:, 1]),max(visit2icd2[:, 1])) + 1
 
-        n_nodes = n_users + n_items + n_tags
+        n_nodes = n_visits + n_ccss + n_icds
 
-        print(f"n_users:{n_users}")
-        print(f"n_items:{n_items}")
-        print(f"n_tags:{n_tags}")
+        print(f"n_visits:{n_visits}")
+        print(f"n_ccss:{n_ccss}")
+        print(f"n_icds:{n_icds}")
         print(f"n_nodes:{n_nodes}")
         print(f"n_interaction:{len(train_data)}")
-        if user2tag is not None:
-            print(f"n_user2tag:{len(user2tag)}")
-            print(f"n_item2tag:{len(item2tag)}")
+        if visit2icd is not None:
+            print(f"n_visit2icd:{len(visit2icd)}")
+            print(f"n_ccs2icd:{len(ccs2icd)}")
         return {
-            "n_users": n_users,
-            "n_items": n_items,
-            "n_tags": n_tags,
+            "n_visits": n_visits,
+            "n_ccss": n_ccss,
+            "n_icds": n_icds,
             "n_nodes": n_nodes
         }
 
