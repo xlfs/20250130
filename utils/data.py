@@ -87,8 +87,7 @@ class DataUtils():
 
     def read_files(self):
         print("reading files ...")
-        data_path = os.path.join(self.args.data_path, self.args.dataset)
-        data_path1 = data_path + '/1'
+        data_path1 = os.path.join(self.args.data_path, self.args.dataset)
         train_file = os.path.join(data_path1, "train.txt")
         visit2icd_file = os.path.join(data_path1, "visit2icd.txt")
         ccs2icd_file = os.path.join(data_path1, "ccs2icd.txt")
@@ -127,30 +126,8 @@ class DataUtils():
             "visit2icd": visit2icd_dict,
         }
 
-        data_path2 = data_path + '/2'
-        train_file = os.path.join(data_path2, "train.txt")
-        visit2icd_file = os.path.join(data_path2, "visit2icd.txt")
-        ccs2icd_file = os.path.join(data_path2, "ccs2icd.txt")
 
-        train_data2 = pd.read_csv(train_file, sep="\t")[["visitID", "ccsID"]]
-
-        visit2icd2, ccs2icd2 = None, None
-        has_icd = os.path.exists(visit2icd_file)
-        if has_icd:
-            visit2icd2 = pd.read_csv(visit2icd_file, sep="\t")
-            ccs2icd2 = pd.read_csv(ccs2icd_file, sep="\t")
-            visit2icd2, ccs2icd2 = visit2icd2.to_numpy(), ccs2icd2.to_numpy()
-
-        train_data2 = train_data2.to_numpy()
-
-        test_file = os.path.join(data_path2, "test.txt")
-        visit2icd_file2 = os.path.join(data_path2, "visit2icd_test.txt")
-        visit2icd_test2 = pd.read_csv(visit2icd_file2, sep="\t")
-        visit2icd_test2 = visit2icd_test2.to_numpy()
-        test_data2 = pd.read_csv(test_file, sep="\t")
-        test_data2 = test_data2.to_numpy()
-
-        return train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data, train_data2, visit2icd2, ccs2icd2, visit2icd_test2, test_data2
+        return train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data
 
 
     def __stat(self, train_data, visit2icd, ccs2icd, visit2icd2,test_data):
