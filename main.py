@@ -112,18 +112,15 @@ def train(args):
 
     from utils.data import DataUtils
     dataUtils = DataUtils(args)
-    train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data, train_data2, visit2icd2, ccs2icd2, visit2icd_test2, test_data2 = dataUtils.read_files()
+    train_data, visit2icd, ccs2icd, data_dict, data_stat, visit2icd_test, test_data= dataUtils.read_files()
 
     adj_mat11, norm_mat11, mean_mat11 = dataUtils.build_graph(train_data, visit2icd, ccs2icd, data_stat)
 
     adj_mat12, norm_mat12, mean_mat12 = dataUtils.build_graph(test_data, visit2icd_test, ccs2icd, data_stat)
 
-    adj_mat21, norm_mat21, mean_mat21 = dataUtils.build_graph(train_data2, visit2icd2, ccs2icd2, data_stat)
-
-    adj_mat22, norm_mat22, mean_mat22 = dataUtils.build_graph(test_data2, visit2icd_test2, ccs2icd2, data_stat)
     
     import pickle
-    task_dataset = pickle.load(open(args.dataset+'/mimic4_box_dataset_0.05.pkl', 'rb'))
+    task_dataset = pickle.load(open(args.dataset+'/mimic3_box_dataset_0.05.pkl', 'rb'))
 
 
     ccs10 = pickle.load(open('ccs10.pkl','rb'))
@@ -148,7 +145,7 @@ def train(args):
     test_loader = DataLoader(testset, batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate_fn)
 
 
-    model = BoxLM(args, data_stat, norm_mat11, norm_mat12, norm_mat21, norm_mat22)
+    model = BoxLM(args, data_stat, norm_mat11, norm_mat12)
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
