@@ -37,8 +37,8 @@ class GraphConv(nn.Module):
         self.device = device
 
         idx = torch.arange(self.n_visits).to(self.device)
-        #self.visit_union_idx = torch.cat([idx, idx], dim=0)
-        self.visit_union_idx = torch.cat([idx, idx, idx, idx, idx], dim=0)
+
+        self.visit_union_idx = torch.cat([idx, idx, idx], dim=0)
 
         idx = torch.arange(self.n_ccss + self.n_icds + self.n_visits).to(self.device)
         self.all_union_idx = torch.cat([idx, idx], dim=0)
@@ -58,38 +58,11 @@ class GraphConv(nn.Module):
         return scatter_max(src=embeddings, index=idx, dim=0, dim_size=dim_size)[0]
 
 
-    def forward(self, visit_center, visit_offset, ccs_center, ccs_offset, icd_center, icd_offset, graph1, graph2):
+    def forward(self, visit_center, visit_offset, ccs_center, ccs_offset, icd_center, icd_offset, graph2):
 
         all_center = torch.cat([visit_center, ccs_center, icd_center], dim=0)
         all_offset = F.relu(torch.cat([visit_offset, ccs_offset, icd_offset], dim=0))
 
-
-        # all history icd ccs
-        _indices = graph1._indices()
-        head, tail = _indices[0, :], _indices[1, :]
-
-        #center
-        history_embs = all_center[tail]
-        visit_center_agg1 = self.center_net(history_embs, head, self.n_nodes)
-        visit_center_agg1 = visit_center_agg1[:self.n_visits]
-        visit_center_agg1 = F.normalize(visit_center_agg1)
-
-        ## visit offset
-        ### visit-ccs, intersect
-        inter_visit_ordinal = (head < self.n_visits) & (tail >= self.n_visits) & (tail < self.n_visits + self.n_ccss)
-        inter_visit_history_offset = F.relu(all_offset[tail[inter_visit_ordinal]])
-        inter_visit_offset_emb1 = self.offset_net(inter_visit_history_offset, head[inter_visit_ordinal], self.n_nodes)
-        inter_visit_offset_emb1 = inter_visit_offset_emb1[:self.n_visits]
-
-        ### visit-icd, union
-        visit_icd_ordinal = (head < self.n_visits) & (tail >= self.n_visits + self.n_ccss)
-        visit_icd_history_offset = F.relu(all_offset[tail[visit_icd_ordinal]])
-        ut_visit_offset_emb1 = self.offset_net(visit_icd_history_offset, head[visit_icd_ordinal], self.n_nodes)
-        ut_visit_offset_emb1 = ut_visit_offset_emb1[:self.n_visits]
-
-
-
-        #-------------------------
 
         # v-v
         _indices = graph2._indices()
@@ -114,8 +87,7 @@ class GraphConv(nn.Module):
         visit_center_agg2 = self.center_net(history_embs, head[visit_visit_ordinal], self.n_visits)
         visit_center_agg2 = F.normalize(visit_center_agg2)
 
-        lambda1 = 1.0
-        visit_final_emb = lambda1*visit_center_agg1 + (1.0-lambda1)*visit_center_agg2
+        visit_final_emb = visit_center_agg2
 
 
         ## visit offset
@@ -138,9 +110,8 @@ class GraphConv(nn.Module):
 
 
         ### union two part
-        visit_offset = torch.cat([inter_visit_offset_emb1, ut_visit_offset_emb1], dim=0)
-        visit_offset = torch.cat([inter_visit_offset_emb1, ut_visit_offset_emb1, inter_visit_offset_emb2, ut_visit_offset_emb2, visit_visit_offset_emb], dim=0)
-        visit_final_offset = F.relu(self.offset_net(visit_offset, self.visit_union_idx, inter_visit_offset_emb1.shape[0]))
+        visit_offset = torch.cat([inter_visit_offset_emb2, ut_visit_offset_emb2, visit_visit_offset_emb], dim=0)
+        visit_final_offset = F.relu(self.offset_net(visit_offset, self.visit_union_idx, inter_visit_offset_emb2.shape[0]))
 
 
 
@@ -163,7 +134,7 @@ class MLP(nn.Module):
 
 
 class BoxLM(nn.Module):
-    def __init__(self, args, data_stat, adj_mat11, adj_mat12, adj_mat21, adj_mat22):
+    def __init__(self, args, data_stat, adj_mat11, adj_mat12):
         super(BoxLM, self).__init__()
 
         self.beta = args.beta
@@ -206,13 +177,6 @@ class BoxLM(nn.Module):
         self.graph12 = self._convert_sp_mat_to_sp_tensor(self.adj_mat12).to(self.device)
         self.graph12 = self.add_residual(self.graph12)
 
-        self.adj_mat21 = adj_mat21[args.graph_type]
-        self.graph21 = self._convert_sp_mat_to_sp_tensor(self.adj_mat21).to(self.device)
-        self.graph21 = self.add_residual(self.graph21)
-
-        self.adj_mat22 = adj_mat22[args.graph_type]
-        self.graph22 = self._convert_sp_mat_to_sp_tensor(self.adj_mat22).to(self.device)
-        self.graph22 = self.add_residual(self.graph22)
 
 
         ccs_embedding = torch.load('mimic3_0.05/ccs_embeddings.pt')
@@ -314,7 +278,7 @@ class BoxLM(nn.Module):
         ccs_offset, icd_offset = self.lightgcn(ccs_emb, icd_emb)
 
 
-        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset, self.graph11, self.graph21)
+        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset, self.graph11)
 
         ccs_agg_embs = ccs_emb
         icd_agg_emb = icd_emb
@@ -335,8 +299,7 @@ class BoxLM(nn.Module):
         icd_emb = self.center_mlp(self.icd_embedding)
         ccs_offset, icd_offset = self.lightgcn(ccs_emb, icd_emb)
 
-        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset,
-                                                  self.graph12, self.graph22)
+        visit_agg_embs, visit_agg_offset = self.gcn(visit_emb, visit_offset, ccs_emb, ccs_offset, icd_emb, icd_offset, self.graph12)
 
         ccs_agg_embs = ccs_emb
         icd_agg_emb = icd_emb
