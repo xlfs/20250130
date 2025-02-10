@@ -11,7 +11,7 @@ def parse_args():
     )
     parser.add_argument("--model", default="boxlm")
     parser.add_argument("--pretrain_model_path", default="")
-    parser.add_argument("--graph_type", default="all", help="choose in [all, user, item, none]")
+    parser.add_argument("--graph_type", default="all", help="choose in [all, visit, ccs, none]")
     parser.add_argument("--eval_rnd_neg", action="store_true", default=False)
     parser.add_argument("--tau", default=1.0, type=float)
     # ===== train ===== #

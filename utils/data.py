@@ -65,7 +65,7 @@ class DataUtils():
         cf_adjs = {}
         norm_mats = {}
         mean_mats = {}
-        for k, g in graph_dict.ccss():
+        for k, g in graph_dict.items():
             row, col = g
             if self.args.inverse_r:
                 row_t = np.concatenate([row, col])
